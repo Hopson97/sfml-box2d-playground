@@ -15,13 +15,19 @@
 namespace
 {
     /// Convert between Box2D and SFML sizes, so 1 meter = 'SCALE' pixels
-    constexpr float SCALE = 10.f;
+    constexpr float SCALE = 8.f;
 
     /// Size of the dynamic_boxes
     constexpr float DYNAMIC_BOX_SIZE = 1.0f;
 
-    /// The number of dynamic_boxes to spawn at the start
-    constexpr int BOX_COUNT = 100;
+    /// The number of dynamic boxes to spawn at the start
+    constexpr int BOX_COUNT = 200;
+
+    /// The number of static to spawn at the start
+    constexpr float STATIC_BOX_COUNT = 5;
+
+    /// Camera movement speed
+    constexpr float CAMERA_SPEED = 10.0f;
 
     /// Converts a Box2D vector to a SFML vector scaled from meters to pixels
     sf::Vector2f to_sfml_position(b2Vec2 box2d_position, int window_height);
@@ -30,8 +36,8 @@ namespace
     sf::Vector2f to_sfml_size(b2Vec2 box2d_size);
 
     /// Creates a random vec2
-    b2Vec2 create_random_b2vec(float x_min = 0.0f, float x_max = 3.0f, float y_min = 20.0f,
-                               float y_max = 3.0f);
+    b2Vec2 create_random_b2vec(float x_min = 10.0f, float x_max = 50.0f, float y_min = 10.0f,
+                               float y_max = 50.0f);
 
     /// Generate a random colour
     sf::Color random_colour();
@@ -47,20 +53,25 @@ namespace
     Box create_box(b2WorldId world);
 
     /// Create a box that does not move
-    Box create_static_box(b2WorldId world, b2Vec2 size, sf::Vector2f position);
+    Box create_static_box(b2WorldId world, b2Vec2 size, b2Vec2 position);
 
     void apply_explosion(b2BodyId body, float explode_strength, sf::Vector2f explosion_position);
 
     /// Window event handing
     void handle_event(const sf::Event& event, sf::Window& window, bool& show_debug_info,
                       bool& close_requested);
+
+    struct Camera
+    {
+        sf::View view;
+        sf::Vector2f speed;
+    };
 } // namespace
 
 int main()
 {
     sf::RenderWindow window(sf::VideoMode({1600, 900}), "Box2D 3 + SFML 3", sf::State::Windowed,
                             {.antiAliasingLevel = 4});
-
     window.setVerticalSyncEnabled(true);
     if (!ImGui::SFML::Init(window))
     {
@@ -69,22 +80,29 @@ int main()
     }
 
     Profiler profiler;
-    bool show_debug_info = false;
-
     Keyboard keyboard;
+    Camera camera;
+    camera.view.setCenter(sf::Vector2f{window.getSize()} / 2.0f);
+
+    b2Vec2 gravity = {0, -20.0f};
 
     /// Define the world
     b2WorldDef world_def = b2DefaultWorldDef();
-    world_def.gravity = {0.0f, -10.0f};
-    world_def.gravity = {0.0f, 0.0f};
+    world_def.gravity = gravity;
     b2WorldId world = b2CreateWorld(&world_def);
 
     // Create static boxes
     std::vector<Box> static_boxes = {
-        create_static_box(world, {60, 1}, {61, 2}), create_static_box(world, {1, 30}, {2, 33}),
-        create_static_box(world, {2, 2}, {50, 50}), create_static_box(world, {2, 2}, {40, 10}),
-        create_static_box(world, {2, 2}, {10, 10}),
+        create_static_box(world, {60, 1}, {61, 2}),
+        create_static_box(world, {1, 40}, {2, 43}),
+        create_static_box(world, {60, 1}, {61, 90}),
     };
+
+    for (int i = 0; i < STATIC_BOX_COUNT; i++)
+    {
+        static_boxes.push_back(
+            create_static_box(world, {2, 2}, create_random_b2vec(20, 70, 20, 50)));
+    }
 
     // Create dynamic boxes
     std::vector<Box> dynamic_boxes;
@@ -103,6 +121,9 @@ int main()
     auto timestep = 1.f / 60.f;
     auto sub_steps = 4;
     auto explode_strength = 50.0f;
+
+    // Start the sim
+    bool show_debug_info = false;
     while (window.isOpen())
     {
         bool close_requested = false;
@@ -117,22 +138,47 @@ int main()
                 // Push the dynamic_boxes away from where the mouse is clicked
                 if (auto mouse_click = event->getIf<sf::Event::MouseButtonReleased>())
                 {
+                    auto pixel = window.mapPixelToCoords(mouse_click->position, camera.view);
                     // Scale down the mouse click to "meters"
-                    auto mouse_position = sf::Vector2f{
-                        mouse_click->position.x / SCALE,
-                        (window.getSize().y - mouse_click->position.y) / SCALE,
+                    auto world_position = sf::Vector2f{
+                        pixel.x / SCALE,
+                        (window.getSize().y - pixel.y) / SCALE,
                     };
 
                     // Move all the dynamic_boxes away from the mouse point by applying a linear
                     // impulse
                     for (auto& box : dynamic_boxes)
                     {
-                        apply_explosion(box.body, explode_strength, mouse_position);
+                        apply_explosion(box.body, explode_strength, world_position);
                     }
                 }
             }
         }
-        ImGui::SFML::Update(window, clock.restart());
+        auto dt = clock.restart();
+
+        sf::Vector2f change{};
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::A))
+        {
+            change.x += -CAMERA_SPEED;
+        }
+        else if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::D))
+        {
+            change.x += CAMERA_SPEED;
+        }
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::W))
+        {
+            change.y += -CAMERA_SPEED;
+        }
+        else if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::S))
+        {
+            change.y += CAMERA_SPEED;
+        }
+
+        camera.speed += change * dt.asSeconds();
+        camera.view.move(camera.speed);
+        camera.speed *= 0.95f;
+
+        ImGui::SFML::Update(window, dt);
         window.clear(sf::Color::Black);
 
         // Update the world and do the physics simulation
@@ -144,6 +190,10 @@ int main()
 
         {
             auto& section = profiler.begin_section("Render");
+
+            camera.view.setSize(sf::Vector2f{window.getSize()});
+            window.setView(camera.view);
+
             // Render the static geometry
             for (auto& box : static_boxes)
             {
@@ -185,10 +235,23 @@ int main()
         // Gui for controlling simulation aspects and restting the scene
         if (ImGui::Begin("Config"))
         {
-            ImGui::SliderFloat("Explode Stength", &explode_strength, 1.0f, 10000.0f);
+            ImGui::Text("Use WASD to move the camera around.");
 
-            if (ImGui::Button("Reset"))
+            ImGui::SliderFloat("Explode Stength", &explode_strength, 1.0f, 10000.0f);
+            if (ImGui::SliderFloat2("Gravity", &gravity.x, -100.0f, 100.0f))
             {
+                b2World_SetGravity(world, gravity);
+            }
+            if (ImGui::Button("Set No Gavity"))
+            {
+                gravity = {0, 0};
+                b2World_SetGravity(world, gravity);
+
+            }
+
+            if (ImGui::Button("Reset Boxes and View"))
+            {
+                camera.view.setCenter(sf::Vector2f{window.getSize()} / 2.0f);
                 for (auto& box : dynamic_boxes)
                 {
                     b2Body_SetLinearVelocity(box.body, {0, 0});
@@ -244,8 +307,8 @@ namespace
         static std::random_device rd;
         static std::mt19937 rng(rd());
         return {
-            std::uniform_real_distribution(10.0f, 50.0f)(rng),
-            std::uniform_real_distribution(10.0f, 50.0f)(rng),
+            std::uniform_real_distribution(x_min, x_max)(rng),
+            std::uniform_real_distribution(y_min, y_max)(rng),
         };
     }
 
@@ -290,7 +353,7 @@ namespace
         };
     }
 
-    Box create_static_box(b2WorldId world, b2Vec2 size, sf::Vector2f position)
+    Box create_static_box(b2WorldId world, b2Vec2 size, b2Vec2 position)
     {
         b2BodyDef body = b2DefaultBodyDef();
         body.type = b2_staticBody;
