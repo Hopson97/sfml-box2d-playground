@@ -32,7 +32,7 @@ namespace
     /// Creates a random vec2
     b2Vec2 create_random_b2vec(float x_min = 0.0f, float x_max = 3.0f, float y_min = 20.0f,
                                float y_max = 3.0f);
-    
+
     /// Generate a random colour
     sf::Color random_colour();
 
@@ -128,7 +128,6 @@ int main()
                     for (auto& box : dynamic_boxes)
                     {
                         apply_explosion(box.body, explode_strength, mouse_position);
-                        }
                     }
                 }
             }
@@ -308,6 +307,21 @@ namespace
             .body = body_id,
             .colour = sf::Color::Green,
         };
+    }
+
+    void apply_explosion(b2BodyId body, float explode_strength, sf::Vector2f explosion_position)
+    {
+        auto body_pos = b2Body_GetPosition(body);
+        auto body_position = sf::Vector2f{body_pos.x, body_pos.y};
+
+        auto diff = body_position - explosion_position;
+        auto distance = diff.lengthSquared() / 2.0f;
+        if (distance > 0.001f)
+        {
+            // The strength depends with distance
+            diff *= explode_strength / distance;
+            b2Body_ApplyLinearImpulse(body, {diff.x, diff.y}, body_pos, true);
+        }
     }
 
     void handle_event(const sf::Event& event, sf::Window& window, bool& show_debug_info,
