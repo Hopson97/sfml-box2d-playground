@@ -32,6 +32,9 @@ namespace
     /// Creates a random vec2
     b2Vec2 create_random_b2vec(float x_min = 0.0f, float x_max = 3.0f, float y_min = 20.0f,
                                float y_max = 3.0f);
+    
+    /// Generate a random colour
+    sf::Color random_colour();
 
     struct Box
     {
@@ -43,13 +46,12 @@ namespace
     /// Creates a box that has physics applied to it at a random position
     Box create_box(b2WorldId world);
 
-    /// Create a static ground plane
+    /// Create a box that does not move
     Box create_static_box(b2WorldId world, b2Vec2 size, sf::Vector2f position);
 
     /// Window event handing
     void handle_event(const sf::Event& event, sf::Window& window, bool& show_debug_info,
                       bool& close_requested);
-
 } // namespace
 
 int main()
@@ -77,10 +79,8 @@ int main()
 
     // Create static boxes
     std::vector<Box> static_boxes = {
-        create_static_box(world, {60, 1}, {61, 2}),
-        create_static_box(world, {1, 30}, {2, 33}),
-        create_static_box(world, {2, 2}, {50, 50}),
-        create_static_box(world, {2, 2}, {40, 10}),
+        create_static_box(world, {60, 1}, {61, 2}), create_static_box(world, {1, 30}, {2, 33}),
+        create_static_box(world, {2, 2}, {50, 50}), create_static_box(world, {2, 2}, {40, 10}),
         create_static_box(world, {2, 2}, {10, 10}),
     };
 
@@ -93,7 +93,7 @@ int main()
 
     sf::RectangleShape box_rectangle;
     box_rectangle.setOutlineColor(sf::Color::White);
-    box_rectangle.setOutlineThickness(2.0f);
+    box_rectangle.setOutlineThickness(1.0f);
 
     sf::Clock clock;
 
@@ -140,38 +140,46 @@ int main()
                 }
             }
         }
+        ImGui::SFML::Update(window, clock.restart());
         window.clear(sf::Color::Black);
 
         // Update the world and do the physics simulation
-        ImGui::SFML::Update(window, clock.restart());
-        b2World_Step(world, timestep, sub_steps);
-
-        // Render the ground
-        for (auto& box : static_boxes)
         {
-            b2Vec2 groundPos = b2Body_GetPosition(box.body);
-            box_rectangle.setRotation(sf::Angle::Zero);
-            box_rectangle.setPosition(to_sfml_position(window, groundPos));
-            box_rectangle.setSize(to_sfml_size(box.size));
-            box_rectangle.setOrigin(box_rectangle.getSize() / 2.f);
-            box_rectangle.setFillColor(box.colour);
-            window.draw(box_rectangle);
+            auto& section = profiler.begin_section("Update");
+            b2World_Step(world, timestep, sub_steps);
+            section.end_section();
         }
 
-        // Draw all the dynamic_boxes
-        for (auto& box : dynamic_boxes)
         {
-            // Get the position and rotation from box2d
-            auto radians = b2Rot_GetAngle(b2Body_GetRotation(box.body));
-            auto position = b2Body_GetPosition(box.body);
+            auto& section = profiler.begin_section("Render");
+            // Render the ground
+            for (auto& box : static_boxes)
+            {
+                b2Vec2 groundPos = b2Body_GetPosition(box.body);
+                box_rectangle.setRotation(sf::Angle::Zero);
+                box_rectangle.setPosition(to_sfml_position(window, groundPos));
+                box_rectangle.setSize(to_sfml_size(box.size));
+                box_rectangle.setOrigin(box_rectangle.getSize() / 2.f);
+                box_rectangle.setFillColor(box.colour);
+                window.draw(box_rectangle);
+            }
 
-            // Convert and set to SFML units
-            box_rectangle.setRotation(sf::radians(radians));
-            box_rectangle.setPosition(to_sfml_position(window, position));
-            box_rectangle.setSize(to_sfml_size(box.size));
-            box_rectangle.setOrigin(box_rectangle.getSize() / 2.f);
-            box_rectangle.setFillColor(box.colour);
-            window.draw(box_rectangle);
+            // Draw all the dynamic_boxes
+            for (auto& box : dynamic_boxes)
+            {
+                // Get the position and rotation from box2d
+                auto radians = b2Rot_GetAngle(b2Body_GetRotation(box.body));
+                auto position = b2Body_GetPosition(box.body);
+
+                // Convert and set to SFML units
+                box_rectangle.setRotation(sf::radians(radians));
+                box_rectangle.setPosition(to_sfml_position(window, position));
+                box_rectangle.setSize(to_sfml_size(box.size));
+                box_rectangle.setOrigin(box_rectangle.getSize() / 2.f);
+                box_rectangle.setFillColor(box.colour);
+                window.draw(box_rectangle);
+            }
+            section.end_section();
         }
 
         // Show profiler
@@ -181,9 +189,10 @@ int main()
             profiler.gui();
         }
 
+        // Gui for controlling simulation aspects and restting the scene
         if (ImGui::Begin("Config"))
         {
-            ImGui::SliderFloat("Explode Stength", &explode_strength, 1.0f, 1000.0f);
+            ImGui::SliderFloat("Explode Stength", &explode_strength, 1.0f, 10000.0f);
 
             if (ImGui::Button("Reset"))
             {
@@ -223,7 +232,7 @@ namespace
 {
     sf::Vector2f to_sfml_position(const sf::RenderWindow& window, b2Vec2 box2d_position)
     {
-        // Box2D defines the bottom left as the origin (so Y is up), so the Y must be inverted 
+        // Box2D defines the bottom left as the origin (so Y is up), so the Y must be inverted
         return {
             box2d_position.x * SCALE,
             window.getSize().y - box2d_position.y * SCALE,
@@ -232,7 +241,8 @@ namespace
 
     sf::Vector2f to_sfml_size(b2Vec2 box_size)
     {
-        // Box2d objects are defined using HALF the size given, so when converting to SFML the result must be * 2 
+        // Box2d objects are defined using HALF the size given, so when converting to SFML the
+        // result must be * 2
         return {box_size.x * SCALE * 2, box_size.y * SCALE * 2};
     }
 
@@ -243,6 +253,21 @@ namespace
         return {
             std::uniform_real_distribution(10.0f, 50.0f)(rng),
             std::uniform_real_distribution(10.0f, 50.0f)(rng),
+        };
+    }
+
+    sf::Color random_colour()
+    {
+        // constexpr static std::array<sf::Color, 7> COLOURS{
+        //     sf::Color::White,  sf::Color::Red,     sf::Color::Green, sf::Color::Blue,
+        //     sf::Color::Yellow, sf::Color::Magenta, sf::Color::Cyan,
+        // };
+        static std::random_device rd;
+        static std::mt19937 rng(rd());
+        return {
+            static_cast<uint8_t>(std::uniform_int_distribution<int>(0, 255)(rng)),
+            static_cast<uint8_t>(std::uniform_int_distribution<int>(0, 255)(rng)),
+            static_cast<uint8_t>(std::uniform_int_distribution<int>(0, 255)(rng)),
         };
     }
 
@@ -268,7 +293,7 @@ namespace
         return {
             .size = {DYNAMIC_BOX_SIZE, DYNAMIC_BOX_SIZE},
             .body = body_id,
-            .colour = sf::Color::Red,
+            .colour = random_colour(),
         };
     }
 
