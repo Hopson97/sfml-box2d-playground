@@ -2,6 +2,7 @@
 #include <print>
 #include <random>
 
+#include <SFML/Graphics/ConvexShape.hpp>
 #include <SFML/Graphics/RectangleShape.hpp>
 #include <SFML/Graphics/RenderWindow.hpp>
 #include <SFML/Window/Event.hpp>
@@ -21,7 +22,7 @@ namespace
     constexpr float DYNAMIC_BOX_SIZE = 1.0f;
 
     /// The number of dynamic_boxes to spawn at the start
-    constexpr int BOX_COUNT = 100;
+    constexpr int BOX_COUNT = 1;
 
     /// Converts a Box2D vector to a SFML vector scaled from meters to pixels
     sf::Vector2f to_sfml_position(b2Vec2 box2d_position, int window_height);
@@ -32,7 +33,7 @@ namespace
     /// Creates a random vec2
     b2Vec2 create_random_b2vec(float x_min = 0.0f, float x_max = 3.0f, float y_min = 20.0f,
                                float y_max = 3.0f);
-    
+
     /// Generate a random colour
     sf::Color random_colour();
 
@@ -43,11 +44,19 @@ namespace
         sf::Color colour;
     };
 
+    struct PhysicsObject
+    {
+        b2BodyId body;
+        sf::ConvexShape shape;
+    };
+
     /// Creates a box that has physics applied to it at a random position
     Box create_box(b2WorldId world);
 
     /// Create a box that does not move
     Box create_static_box(b2WorldId world, b2Vec2 size, sf::Vector2f position);
+
+    PhysicsObject create_special(b2WorldId world, const std::vector<b2Vec2>& points);
 
     void apply_explosion(b2BodyId body, float explode_strength, sf::Vector2f explosion_position);
 
@@ -93,6 +102,8 @@ int main()
         dynamic_boxes.push_back(create_box(world));
     }
 
+    auto special = create_special(world, {{-5.0f, 0.0f}, {5.0f, 0.0f}, {0.0f, 5.0f}});
+
     sf::RectangleShape box_rectangle;
     box_rectangle.setOutlineColor(sf::Color::White);
     box_rectangle.setOutlineThickness(1.0f);
@@ -128,8 +139,9 @@ int main()
                     for (auto& box : dynamic_boxes)
                     {
                         apply_explosion(box.body, explode_strength, mouse_position);
-                        }
                     }
+
+                    apply_explosion(special.body, explode_strength, mouse_position);
                 }
             }
         }
@@ -165,7 +177,6 @@ int main()
                 auto radians = b2Rot_GetAngle(b2Body_GetRotation(box.body));
                 auto position = b2Body_GetPosition(box.body);
 
-                // Convert and set to SFML units
                 box_rectangle.setRotation(sf::radians(radians));
                 box_rectangle.setPosition(to_sfml_position(position, window.getSize().y));
                 box_rectangle.setSize(to_sfml_size(box.size));
@@ -173,6 +184,24 @@ int main()
                 box_rectangle.setFillColor(box.colour);
                 window.draw(box_rectangle);
             }
+
+            // Draw speical shapes
+            {
+                auto radians = b2Rot_GetAngle(b2Body_GetRotation(special.body));
+                auto position = b2Body_GetPosition(special.body);
+
+                special.shape.setRotation(sf::radians(radians));
+                special.shape.setPosition(to_sfml_position(position, window.getSize().y));
+                window.draw(special.shape);
+
+                box_rectangle.setRotation(sf::Angle::Zero);
+                box_rectangle.setPosition(special.shape.getPosition());
+                box_rectangle.setSize({2,2});
+                box_rectangle.setOrigin({0,0});
+                box_rectangle.setFillColor(sf::Color::Red);
+                window.draw(box_rectangle);
+            }
+
             section.end_section();
         }
 
@@ -196,6 +225,7 @@ int main()
                     b2Body_SetAngularVelocity(box.body, 0);
                     b2Body_SetTransform(box.body, create_random_b2vec(), b2Rot_identity);
                 }
+                special = create_special(world, {{-5.0f, 0.0f}, {5.0f, 0.0f}, {0.0f, 5.0f}});
             }
         }
         ImGui::End();
@@ -308,6 +338,77 @@ namespace
             .body = body_id,
             .colour = sf::Color::Green,
         };
+    }
+
+    b2Vec2 computeCentroid(const std::vector<b2Vec2>& verts)
+    {
+        float area = 0.f;
+        float cx = 0.f, cy = 0.f;
+
+        for (int i = 0; i < verts.size(); i++)
+        {
+            b2Vec2 p0 = verts[i];
+            b2Vec2 p1 = verts[(i + 1) % verts.size()];
+
+            float cross = p0.x * p1.y - p1.x * p0.y; // cross product
+            area += cross;
+            cx += (p0.x + p1.x) * cross;
+            cy += (p0.y + p1.y) * cross;
+        }
+        area *= 0.5f;
+        cx /= (6.f * area);
+        cy /= (6.f * area);
+
+        return {cx, cy};
+    }
+
+    PhysicsObject create_special(b2WorldId world, const std::vector<b2Vec2>& points)
+    {
+        b2BodyDef body = b2DefaultBodyDef();
+        body.type = b2_dynamicBody;
+        body.position = create_random_b2vec();
+        body.linearDamping = 1.0f;
+        body.angularDamping = 1.0f;
+
+        b2ShapeDef shape = b2DefaultShapeDef();
+        shape.density = 1.0f;
+        shape.material.friction = 0.3f;
+
+        b2BodyId body_id = b2CreateBody(world, &body);
+        b2Hull hull = b2ComputeHull(points.data(), points.size());
+        b2Polygon polygon = b2MakePolygon(&hull, 0);
+        b2CreatePolygonShape(body_id, &shape, &polygon);
+
+        PhysicsObject object;
+        object.shape.setPointCount(points.size());
+        for (std::size_t i = 0; i < points.size(); i++)
+        {
+            object.shape.setPoint(i, {points[i].x * SCALE, points[i].y * SCALE});
+        }
+        object.shape.setFillColor(random_colour());
+        object.shape.setOutlineColor(sf::Color::White);
+        object.shape.setOutlineThickness(1.0f);
+        object.body = body_id;
+
+        b2Vec2 com = b2Body_GetLocalCenterOfMass(body_id);
+        object.shape.setOrigin({com.x * SCALE, com.y * SCALE});
+
+        return object;
+    }
+
+    void apply_explosion(b2BodyId body, float explode_strength, sf::Vector2f explosion_position)
+    {
+        auto body_pos = b2Body_GetPosition(body);
+        auto body_position = sf::Vector2f{body_pos.x, body_pos.y};
+
+        auto diff = body_position - explosion_position;
+        auto distance = diff.lengthSquared() / 2.0f;
+        if (distance > 0.001f)
+        {
+            // The strength depends with distance
+            diff *= explode_strength / distance;
+            b2Body_ApplyLinearImpulse(body, {diff.x, diff.y}, body_pos, true);
+        }
     }
 
     void handle_event(const sf::Event& event, sf::Window& window, bool& show_debug_info,
