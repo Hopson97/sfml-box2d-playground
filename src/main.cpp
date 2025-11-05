@@ -24,7 +24,7 @@ namespace
     constexpr int BOX_COUNT = 100;
 
     /// Converts a Box2D vector to a SFML vector scaled from meters to pixels
-    sf::Vector2f to_sfml_position(const sf::RenderWindow& window, b2Vec2 box2d_position);
+    sf::Vector2f to_sfml_position(b2Vec2 box2d_position, int window_height);
 
     /// Converts a Box2D size to SFML size for rendering
     sf::Vector2f to_sfml_size(b2Vec2 box2d_size);
@@ -48,6 +48,8 @@ namespace
 
     /// Create a box that does not move
     Box create_static_box(b2WorldId world, b2Vec2 size, sf::Vector2f position);
+
+    void apply_explosion(b2BodyId body, float explode_strength, sf::Vector2f explosion_position);
 
     /// Window event handing
     void handle_event(const sf::Event& event, sf::Window& window, bool& show_debug_info,
@@ -125,16 +127,7 @@ int main()
                     // impulse
                     for (auto& box : dynamic_boxes)
                     {
-                        auto body_pos = b2Body_GetPosition(box.body);
-                        auto body_position = sf::Vector2f{body_pos.x, body_pos.y};
-
-                        auto diff = body_position - mouse_position;
-                        auto distance = diff.lengthSquared() / 2.0f;
-                        if (distance > 0.001f)
-                        {
-                            // The strength depends with distance
-                            diff *= explode_strength / distance;
-                            b2Body_ApplyLinearImpulse(box.body, {diff.x, diff.y}, body_pos, true);
+                        apply_explosion(box.body, explode_strength, mouse_position);
                         }
                     }
                 }
@@ -152,12 +145,13 @@ int main()
 
         {
             auto& section = profiler.begin_section("Render");
-            // Render the ground
+            // Render the static geometry
             for (auto& box : static_boxes)
             {
-                b2Vec2 groundPos = b2Body_GetPosition(box.body);
+                auto position = b2Body_GetPosition(box.body);
+
                 box_rectangle.setRotation(sf::Angle::Zero);
-                box_rectangle.setPosition(to_sfml_position(window, groundPos));
+                box_rectangle.setPosition(to_sfml_position(position, window.getSize().y));
                 box_rectangle.setSize(to_sfml_size(box.size));
                 box_rectangle.setOrigin(box_rectangle.getSize() / 2.f);
                 box_rectangle.setFillColor(box.colour);
@@ -173,7 +167,7 @@ int main()
 
                 // Convert and set to SFML units
                 box_rectangle.setRotation(sf::radians(radians));
-                box_rectangle.setPosition(to_sfml_position(window, position));
+                box_rectangle.setPosition(to_sfml_position(position, window.getSize().y));
                 box_rectangle.setSize(to_sfml_size(box.size));
                 box_rectangle.setOrigin(box_rectangle.getSize() / 2.f);
                 box_rectangle.setFillColor(box.colour);
@@ -230,12 +224,12 @@ int main()
 
 namespace
 {
-    sf::Vector2f to_sfml_position(const sf::RenderWindow& window, b2Vec2 box2d_position)
+    sf::Vector2f to_sfml_position(b2Vec2 box2d_position, int window_height)
     {
         // Box2D defines the bottom left as the origin (so Y is up), so the Y must be inverted
         return {
             box2d_position.x * SCALE,
-            window.getSize().y - box2d_position.y * SCALE,
+            window_height - box2d_position.y * SCALE,
         };
     }
 
