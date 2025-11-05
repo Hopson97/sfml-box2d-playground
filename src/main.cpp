@@ -14,33 +14,42 @@
 
 namespace
 {
-    /// Convert between Box2D and SFML sizes, so 1 meter = 20 pixels
-    constexpr float SCALE = 20.f;
+    /// Convert between Box2D and SFML sizes, so 1 meter = 'SCALE' pixels
+    constexpr float SCALE = 10.f;
 
-    /// Size of the boxes
+    /// Size of the dynamic_boxes
     constexpr float DYNAMIC_BOX_SIZE = 1.0f;
-    constexpr float GROUND_WIDTH = 50.0f;
-    constexpr float GROUND_HEIGHT = 8.0f;
 
-    /// The number of boxes to spawn at the start
-    constexpr int BOX_COUNT = 50;
+    /// The number of dynamic_boxes to spawn at the start
+    constexpr int BOX_COUNT = 100;
 
     /// Converts a Box2D vector to a SFML vector scaled from meters to pixels
     sf::Vector2f to_sfml_position(const sf::RenderWindow& window, b2Vec2 box2d_position);
+
+    /// Converts a Box2D size to SFML size for rendering
+    sf::Vector2f to_sfml_size(b2Vec2 box2d_size);
 
     /// Creates a random vec2
     b2Vec2 create_random_b2vec(float x_min = 0.0f, float x_max = 3.0f, float y_min = 20.0f,
                                float y_max = 3.0f);
 
+    struct Box
+    {
+        b2Vec2 size;
+        b2BodyId body;
+        sf::Color colour;
+    };
+
     /// Creates a box that has physics applied to it at a random position
-    b2BodyId create_box(b2WorldId world);
+    Box create_box(b2WorldId world);
 
     /// Create a static ground plane
-    b2BodyId create_ground(b2WorldId world);
+    Box create_static_box(b2WorldId world, b2Vec2 size, sf::Vector2f position);
 
     /// Window event handing
     void handle_event(const sf::Event& event, sf::Window& window, bool& show_debug_info,
                       bool& close_requested);
+
 } // namespace
 
 int main()
@@ -66,26 +75,25 @@ int main()
     world_def.gravity = {0.0f, 0.0f};
     b2WorldId world = b2CreateWorld(&world_def);
 
-    // Create the ground
-    auto ground_id = create_ground(world);
+    // Create static boxes
+    std::vector<Box> static_boxes = {
+        create_static_box(world, {60, 1}, {61, 2}),
+        create_static_box(world, {1, 30}, {2, 33}),
+        create_static_box(world, {2, 2}, {50, 50}),
+        create_static_box(world, {2, 2}, {40, 10}),
+        create_static_box(world, {2, 2}, {10, 10}),
+    };
 
-    // Create boxes
-    std::vector<b2BodyId> bodies;
+    // Create dynamic boxes
+    std::vector<Box> dynamic_boxes;
     for (int i = 0; i < BOX_COUNT; i++)
     {
-        bodies.push_back(create_box(world));
+        dynamic_boxes.push_back(create_box(world));
     }
 
-    // Note when defining object size, the sizes MUST be * 2.0
-    // This is because Box2d defines objects starting at their center, so a box of size = 1 is
-    // actually 2m across
-    sf::RectangleShape ground_rect({GROUND_WIDTH * SCALE * 2, GROUND_HEIGHT * SCALE * 2});
-    ground_rect.setOrigin(ground_rect.getSize() / 2.f);
-    ground_rect.setFillColor(sf::Color::Green);
-
-    sf::RectangleShape box_rect({DYNAMIC_BOX_SIZE * SCALE * 2, DYNAMIC_BOX_SIZE * SCALE * 2});
-    box_rect.setOrigin(box_rect.getSize() / 2.f);
-    box_rect.setFillColor(sf::Color::Red);
+    sf::RectangleShape box_rectangle;
+    box_rectangle.setOutlineColor(sf::Color::White);
+    box_rectangle.setOutlineThickness(2.0f);
 
     sf::Clock clock;
 
@@ -104,7 +112,7 @@ int main()
 
             if (!ImGui::GetIO().WantCaptureMouse)
             {
-                // Push the boxes away from where the mouse is clicked
+                // Push the dynamic_boxes away from where the mouse is clicked
                 if (auto mouse_click = event->getIf<sf::Event::MouseButtonReleased>())
                 {
                     // Scale down the mouse click to "meters"
@@ -113,19 +121,20 @@ int main()
                         (window.getSize().y - mouse_click->position.y) / SCALE,
                     };
 
-                    // Move all the boxes away from the mouse point by applying a linear impulse
-                    for (auto& body : bodies)
+                    // Move all the dynamic_boxes away from the mouse point by applying a linear
+                    // impulse
+                    for (auto& box : dynamic_boxes)
                     {
-                        auto body_pos = b2Body_GetPosition(body);
+                        auto body_pos = b2Body_GetPosition(box.body);
                         auto body_position = sf::Vector2f{body_pos.x, body_pos.y};
 
                         auto diff = body_position - mouse_position;
-                        auto distance = diff.length();
+                        auto distance = diff.lengthSquared() / 2.0f;
                         if (distance > 0.001f)
                         {
                             // The strength depends with distance
                             diff *= explode_strength / distance;
-                            b2Body_ApplyLinearImpulse(body, {diff.x, diff.y}, body_pos, true);
+                            b2Body_ApplyLinearImpulse(box.body, {diff.x, diff.y}, body_pos, true);
                         }
                     }
                 }
@@ -138,21 +147,31 @@ int main()
         b2World_Step(world, timestep, sub_steps);
 
         // Render the ground
-        b2Vec2 groundPos = b2Body_GetPosition(ground_id);
-        ground_rect.setPosition(to_sfml_position(window, groundPos));
-        window.draw(ground_rect);
+        for (auto& box : static_boxes)
+        {
+            b2Vec2 groundPos = b2Body_GetPosition(box.body);
+            box_rectangle.setRotation(sf::Angle::Zero);
+            box_rectangle.setPosition(to_sfml_position(window, groundPos));
+            box_rectangle.setSize(to_sfml_size(box.size));
+            box_rectangle.setOrigin(box_rectangle.getSize() / 2.f);
+            box_rectangle.setFillColor(box.colour);
+            window.draw(box_rectangle);
+        }
 
-        // Draw all the boxes
-        for (auto& body : bodies)
+        // Draw all the dynamic_boxes
+        for (auto& box : dynamic_boxes)
         {
             // Get the position and rotation from box2d
-            auto radians = b2Rot_GetAngle(b2Body_GetRotation(body));
-            auto position = b2Body_GetPosition(body);
+            auto radians = b2Rot_GetAngle(b2Body_GetRotation(box.body));
+            auto position = b2Body_GetPosition(box.body);
 
             // Convert and set to SFML units
-            box_rect.setRotation(sf::radians(radians));
-            box_rect.setPosition(to_sfml_position(window, position));
-            window.draw(box_rect);
+            box_rectangle.setRotation(sf::radians(radians));
+            box_rectangle.setPosition(to_sfml_position(window, position));
+            box_rectangle.setSize(to_sfml_size(box.size));
+            box_rectangle.setOrigin(box_rectangle.getSize() / 2.f);
+            box_rectangle.setFillColor(box.colour);
+            window.draw(box_rectangle);
         }
 
         // Show profiler
@@ -168,11 +187,11 @@ int main()
 
             if (ImGui::Button("Reset"))
             {
-                for (auto& body : bodies)
+                for (auto& box : dynamic_boxes)
                 {
-                    b2Body_SetLinearVelocity(body, {0, 0});
-                    b2Body_SetAngularVelocity(body, 0);
-                    b2Body_SetTransform(body, create_random_b2vec(), b2Rot_identity);
+                    b2Body_SetLinearVelocity(box.body, {0, 0});
+                    b2Body_SetAngularVelocity(box.body, 0);
+                    b2Body_SetTransform(box.body, create_random_b2vec(), b2Rot_identity);
                 }
             }
         }
@@ -189,9 +208,13 @@ int main()
 
     // Cleanup
     ImGui::SFML::Shutdown(window);
-    for (auto& body : bodies)
+    for (auto& box : dynamic_boxes)
     {
-        b2DestroyBody(body);
+        b2DestroyBody(box.body);
+    }
+    for (auto& box : static_boxes)
+    {
+        b2DestroyBody(box.body);
     }
     b2DestroyWorld(world);
 }
@@ -200,11 +223,17 @@ namespace
 {
     sf::Vector2f to_sfml_position(const sf::RenderWindow& window, b2Vec2 box2d_position)
     {
-        // Box2D has the coords such that 0,0 is the bottom left, so the Y must be inverted
+        // Box2D defines the bottom left as the origin (so Y is up), so the Y must be inverted 
         return {
             box2d_position.x * SCALE,
             window.getSize().y - box2d_position.y * SCALE,
         };
+    }
+
+    sf::Vector2f to_sfml_size(b2Vec2 box_size)
+    {
+        // Box2d objects are defined using HALF the size given, so when converting to SFML the result must be * 2 
+        return {box_size.x * SCALE * 2, box_size.y * SCALE * 2};
     }
 
     b2Vec2 create_random_b2vec(float x_min, float x_max, float y_min, float y_max)
@@ -212,15 +241,13 @@ namespace
         static std::random_device rd;
         static std::mt19937 rng(rd());
         return {
-            std::uniform_real_distribution(0.0f, 30.0f)(rng),
-            std::uniform_real_distribution(10.0f, 30.0f)(rng),
+            std::uniform_real_distribution(10.0f, 50.0f)(rng),
+            std::uniform_real_distribution(10.0f, 50.0f)(rng),
         };
     }
 
-    b2BodyId create_box(b2WorldId world)
+    Box create_box(b2WorldId world)
     {
-
-        // Define a box to fall
         b2BodyDef body = b2DefaultBodyDef();
         body.type = b2_dynamicBody;
         body.position = create_random_b2vec();
@@ -231,27 +258,37 @@ namespace
         body.angularDamping = 1.0f;
 
         b2ShapeDef shape = b2DefaultShapeDef();
-        shape.density = 5.0f;
+        shape.density = 1.0f;
         shape.material.friction = 0.3f;
 
         b2BodyId body_id = b2CreateBody(world, &body);
         b2Polygon box = b2MakeBox(DYNAMIC_BOX_SIZE, DYNAMIC_BOX_SIZE);
         b2CreatePolygonShape(body_id, &shape, &box);
 
-        return body_id;
+        return {
+            .size = {DYNAMIC_BOX_SIZE, DYNAMIC_BOX_SIZE},
+            .body = body_id,
+            .colour = sf::Color::Red,
+        };
     }
 
-    b2BodyId create_ground(b2WorldId world)
+    Box create_static_box(b2WorldId world, b2Vec2 size, sf::Vector2f position)
     {
         b2BodyDef body = b2DefaultBodyDef();
-        body.position = {0.0f, 1.0f};
+        body.type = b2_staticBody;
+        body.position = {position.x, position.y};
 
-        b2Polygon box = b2MakeBox(GROUND_WIDTH, GROUND_HEIGHT);
+        b2Polygon box = b2MakeBox(size.x, size.y);
         b2ShapeDef shape = b2DefaultShapeDef();
-        b2BodyId ground_id = b2CreateBody(world, &body);
-        b2CreatePolygonShape(ground_id, &shape, &box);
+        b2BodyId body_id = b2CreateBody(world, &body);
 
-        return ground_id;
+        b2CreatePolygonShape(body_id, &shape, &box);
+
+        return {
+            .size = size,
+            .body = body_id,
+            .colour = sf::Color::Green,
+        };
     }
 
     void handle_event(const sf::Event& event, sf::Window& window, bool& show_debug_info,
