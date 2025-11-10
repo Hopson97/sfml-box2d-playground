@@ -22,7 +22,7 @@ namespace
     constexpr float DYNAMIC_BOX_SIZE = 1.0f;
 
     /// The number of dynamic_boxes to spawn at the start
-    constexpr int BOX_COUNT = 1;
+    constexpr int BOX_COUNT = 10;
 
     /// Converts a Box2D vector to a SFML vector scaled from meters to pixels
     sf::Vector2f to_sfml_position(b2Vec2 box2d_position, int window_height);
@@ -141,7 +141,7 @@ int main()
                         apply_explosion(box.body, explode_strength, mouse_position);
                     }
 
-                    apply_explosion(special.body, explode_strength, mouse_position);
+                   // apply_explosion(special.body, explode_strength, mouse_position);
                 }
             }
         }
@@ -190,14 +190,14 @@ int main()
                 auto radians = b2Rot_GetAngle(b2Body_GetRotation(special.body));
                 auto position = b2Body_GetPosition(special.body);
 
-                special.shape.setRotation(sf::radians(radians));
+                special.shape.setRotation(sf::radians(-radians));
                 special.shape.setPosition(to_sfml_position(position, window.getSize().y));
                 window.draw(special.shape);
 
                 box_rectangle.setRotation(sf::Angle::Zero);
                 box_rectangle.setPosition(special.shape.getPosition());
                 box_rectangle.setSize({2,2});
-                box_rectangle.setOrigin({0,0});
+                //box_rectangle.setOrigin({0,0});
                 box_rectangle.setFillColor(sf::Color::Red);
                 window.draw(box_rectangle);
             }
@@ -383,15 +383,15 @@ namespace
         object.shape.setPointCount(points.size());
         for (std::size_t i = 0; i < points.size(); i++)
         {
-            object.shape.setPoint(i, {points[i].x * SCALE, points[i].y * SCALE});
+            object.shape.setPoint(i, {points[i].x * SCALE, -points[i].y * SCALE});
         }
         object.shape.setFillColor(random_colour());
         object.shape.setOutlineColor(sf::Color::White);
         object.shape.setOutlineThickness(1.0f);
         object.body = body_id;
 
-        b2Vec2 com = b2Body_GetLocalCenterOfMass(body_id);
-        object.shape.setOrigin({com.x * SCALE, com.y * SCALE});
+       // b2Vec2 com = b2Body_GetLocalCenterOfMass(body_id);
+      //  object.shape.setOrigin({com.x * SCALE, com.y * SCALE});
 
         return object;
     }
