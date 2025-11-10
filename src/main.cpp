@@ -2,6 +2,7 @@
 #include <print>
 #include <random>
 
+#include <SFML/Graphics/ConvexShape.hpp>
 #include <SFML/Graphics/RectangleShape.hpp>
 #include <SFML/Graphics/RenderWindow.hpp>
 #include <SFML/Window/Event.hpp>
@@ -49,11 +50,19 @@ namespace
         sf::Color colour;
     };
 
+    struct PhysicsObject
+    {
+        b2BodyId body;
+        sf::ConvexShape shape;
+    };
+
     /// Creates a box that has physics applied to it at a random position
     Box create_box(b2WorldId world);
 
     /// Create a box that does not move
     Box create_static_box(b2WorldId world, b2Vec2 size, b2Vec2 position);
+
+    PhysicsObject create_special(b2WorldId world, const std::vector<b2Vec2>& points);
 
     void apply_explosion(b2BodyId body, float explode_strength, sf::Vector2f explosion_position);
 
@@ -111,13 +120,15 @@ int main()
         dynamic_boxes.push_back(create_box(world));
     }
 
+    auto special = create_special(world, {{-5.0f, 0.0f}, {5.0f, 0.0f}, {0.0f, 5.0f}});
+
     sf::RectangleShape box_rectangle;
     box_rectangle.setOutlineColor(sf::Color::White);
     box_rectangle.setOutlineThickness(1.0f);
 
     sf::Clock clock;
 
-    // Parameters used for the box2d simultion
+    // Parameters used for the box2d simulations
     auto timestep = 1.f / 60.f;
     auto sub_steps = 4;
     auto explode_strength = 50.0f;
@@ -149,8 +160,13 @@ int main()
                     // impulse
                     for (auto& box : dynamic_boxes)
                     {
-                        apply_explosion(box.body, explode_strength, world_position);
+<<<<<<< HEAD
+                        apply_explosion(box.body, explode_strength, mouse_position);
+                        == == == = apply_explosion(box.body, explode_strength, world_position);
+>>>>>>> ee977a6d7b3fb0393ed2dd8cd7340148244d6492
                     }
+
+                    // apply_explosion(special.body, explode_strength, mouse_position);
                 }
             }
         }
@@ -214,7 +230,6 @@ int main()
                 auto radians = b2Rot_GetAngle(b2Body_GetRotation(box.body));
                 auto position = b2Body_GetPosition(box.body);
 
-                // Convert and set to SFML units
                 box_rectangle.setRotation(sf::radians(radians));
                 box_rectangle.setPosition(to_sfml_position(position, window.getSize().y));
                 box_rectangle.setSize(to_sfml_size(box.size));
@@ -222,6 +237,24 @@ int main()
                 box_rectangle.setFillColor(box.colour);
                 window.draw(box_rectangle);
             }
+
+            // Draw special shapes
+            {
+                auto radians = b2Rot_GetAngle(b2Body_GetRotation(special.body));
+                auto position = b2Body_GetPosition(special.body);
+
+                special.shape.setRotation(sf::radians(-radians));
+                special.shape.setPosition(to_sfml_position(position, window.getSize().y));
+                window.draw(special.shape);
+
+                box_rectangle.setRotation(sf::Angle::Zero);
+                box_rectangle.setPosition(special.shape.getPosition());
+                box_rectangle.setSize({2, 2});
+                // box_rectangle.setOrigin({0,0});
+                box_rectangle.setFillColor(sf::Color::Red);
+                window.draw(box_rectangle);
+            }
+
             section.end_section();
         }
 
@@ -232,21 +265,20 @@ int main()
             profiler.gui();
         }
 
-        // Gui for controlling simulation aspects and restting the scene
+        // Gui for controlling simulation aspects and reseting the scene
         if (ImGui::Begin("Config"))
         {
             ImGui::Text("Use WASD to move the camera around.");
 
-            ImGui::SliderFloat("Explode Stength", &explode_strength, 1.0f, 10000.0f);
+            ImGui::SliderFloat("Explode Strength", &explode_strength, 1.0f, 10000.0f);
             if (ImGui::SliderFloat2("Gravity", &gravity.x, -100.0f, 100.0f))
             {
                 b2World_SetGravity(world, gravity);
             }
-            if (ImGui::Button("Set No Gavity"))
+            if (ImGui::Button("Set No Gravity"))
             {
                 gravity = {0, 0};
                 b2World_SetGravity(world, gravity);
-
             }
 
             if (ImGui::Button("Reset Boxes and View"))
@@ -258,6 +290,7 @@ int main()
                     b2Body_SetAngularVelocity(box.body, 0);
                     b2Body_SetTransform(box.body, create_random_b2vec(), b2Rot_identity);
                 }
+                special = create_special(world, {{-5.0f, 0.0f}, {5.0f, 0.0f}, {0.0f, 5.0f}});
             }
         }
         ImGui::End();
@@ -370,6 +403,40 @@ namespace
             .body = body_id,
             .colour = sf::Color::Green,
         };
+    }
+
+    PhysicsObject create_special(b2WorldId world, const std::vector<b2Vec2>& points)
+    {
+        b2BodyDef body = b2DefaultBodyDef();
+        body.type = b2_dynamicBody;
+        body.position = create_random_b2vec();
+        body.linearDamping = 1.0f;
+        body.angularDamping = 1.0f;
+
+        b2ShapeDef shape = b2DefaultShapeDef();
+        shape.density = 1.0f;
+        shape.material.friction = 0.3f;
+
+        b2BodyId body_id = b2CreateBody(world, &body);
+        b2Hull hull = b2ComputeHull(points.data(), points.size());
+        b2Polygon polygon = b2MakePolygon(&hull, 0);
+        b2CreatePolygonShape(body_id, &shape, &polygon);
+
+        PhysicsObject object;
+        object.shape.setPointCount(points.size());
+        for (std::size_t i = 0; i < points.size(); i++)
+        {
+            object.shape.setPoint(i, {points[i].x * SCALE, -points[i].y * SCALE});
+        }
+        object.shape.setFillColor(random_colour());
+        object.shape.setOutlineColor(sf::Color::White);
+        object.shape.setOutlineThickness(1.0f);
+        object.body = body_id;
+
+        // b2Vec2 com = b2Body_GetLocalCenterOfMass(body_id);
+        //  object.shape.setOrigin({com.x * SCALE, com.y * SCALE});
+
+        return object;
     }
 
     void apply_explosion(b2BodyId body, float explode_strength, sf::Vector2f explosion_position)
