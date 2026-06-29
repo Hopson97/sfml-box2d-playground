@@ -160,10 +160,9 @@ int main()
                     // impulse
                     for (auto& box : dynamic_boxes)
                     {
-<<<<<<< HEAD
-                        apply_explosion(box.body, explode_strength, mouse_position);
-                        == == == = apply_explosion(box.body, explode_strength, world_position);
->>>>>>> ee977a6d7b3fb0393ed2dd8cd7340148244d6492
+
+                        apply_explosion(box.body, explode_strength, world_position);
+
                     }
 
                     // apply_explosion(special.body, explode_strength, mouse_position);
